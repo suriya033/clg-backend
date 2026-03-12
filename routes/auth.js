@@ -1,0 +1,105 @@
+const express = require('express');
+const router = express.Router();
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+
+// @route   POST api/auth/login
+// @desc    Authenticate user & get token
+// @access  Public
+router.post('/login', async (req, res) => {
+    const { userId, password } = req.body;
+
+    try {
+        console.log(`Login attempt for userId: [${userId}]`);
+        // Case-insensitive search
+        const user = await User.findOne({ userId: { $regex: new RegExp(`^${userId}$`, 'i') } });
+
+        if (!user) {
+            console.log(`User not found: [${userId}]`);
+            return res.status(400).json({ message: 'User not found. Check your User ID.' });
+        }
+
+        console.log(`User found: [${user.userId}], comparing password...`);
+        const isMatch = await user.comparePassword(password);
+        console.log(`Password match result: ${isMatch}`);
+        if (!isMatch) {
+            console.log(`Password mismatch for user: [${userId}]`);
+            return res.status(400).json({ message: 'Invalid Credentials' });
+        }
+
+        if (!user.isActive) {
+            return res.status(403).json({ message: 'Account is deactivated. Contact Admin.' });
+        }
+
+        const payload = {
+            user: {
+                id: user.id,
+                role: user.role,
+                name: user.name,
+                department: user.department
+            }
+        };
+
+        jwt.sign(
+            payload,
+            process.env.JWT_SECRET,
+            { expiresIn: '24h' },
+            (err, token) => {
+                if (err) throw err;
+                res.json({
+                    token,
+                    user: {
+                        id: user.id,
+                        userId: user.userId,
+                        name: user.name,
+                        role: user.role,
+                        email: user.email,
+                        department: user.department,
+                        mobileNo: user.mobileNo,
+                        branch: user.branch,
+                        year: user.year,
+                        semester: user.semester,
+                        section: user.section,
+                        photo: user.photo
+                    }
+                });
+            }
+        );
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server error');
+    }
+});
+
+const auth = require('../middleware/auth');
+const bcrypt = require('bcryptjs');
+
+// @route   PUT api/auth/change-password
+// @desc    Change user password
+// @access  Private
+router.put('/change-password', auth(), async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const isMatch = await user.comparePassword(currentPassword);
+        if (!isMatch) {
+            return res.status(400).json({ message: 'Invalid current password' });
+        }
+
+        // The pre-save hook in User model will handle hashing if we save the user object
+        user.password = newPassword;
+        await user.save();
+
+        res.json({ message: 'Password updated successfully' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+module.exports = router;
